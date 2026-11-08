@@ -46,3 +46,34 @@ getPlayinfo = async function (ext) {
     return jsonify({urls: [], parse_error: '黄果播放解析失败：' + (error.message || String(error))});
   }
 };
+
+// The upstream catalogue (fixed SHA above) never returns pagecount. The hub
+// treats a missing total as "keep paging" and shows a next-page control, so the
+// single-page home tab leads to an empty page. Wrap getCards to attach the real
+// total without touching the audited parsing helpers. Home is one curated grid;
+// channel pages expose their total in the pager's data-pages attribute.
+getCards = async function (ext) {
+  const args = argsify(ext);
+  const id = String(args.id || 'home').replace(/^\//, '');
+  const page = Math.max(1, parseInt(args.page) || 1);
+  try {
+    if (id === 'home') {
+      const list = page > 1 ? [] : parseGridCards(await fetchHtml(SITE + '/'), true);
+      await _maybeFillPics(list);
+      return jsonify({list, page, pagecount: 1});
+    }
+    const url = SITE + '/' + id + '/' + (page > 1 ? page + '/' : '');
+    const html = await fetchHtml(url);
+    const list = id.indexOf('rank') !== -1 ? parseRanks(html) : parseGridCards(html, false);
+    await _maybeFillPics(list);
+    const result = {list, page};
+    const marked = html.match(/data-pages=["']?(\d+)/);
+    const tail = html.match(new RegExp('/' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(\\d+)/["\'\\s>]'));
+    const total = Math.max(Number(marked && marked[1]) || 0, Number(tail && tail[1]) || 0);
+    if (total >= page) result.pagecount = total;
+    return jsonify(result);
+  } catch (error) {
+    console.error('getCards error:', error);
+    return jsonify({list: [], page});
+  }
+};

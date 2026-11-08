@@ -78,3 +78,39 @@ test('catalogue, episode extraction and encrypted poster transport stay compatib
   assert.equal(poster.pathname, '/img');
   assert.equal(poster.searchParams.get('url'), 'https://images.example/fixture');
 });
+
+const GRID = '<div class="hg-card-grid"><div class="hg-drama-card"><a class="hg-drama-card__title" href="/detail/123/">Fixture</a></div></div>';
+
+test('home declares a single page so the hub never offers an empty next page', async t => {
+  const h = new SpiderHost({fetchImpl: async () => new Response(GRID)});
+  await h.loadFromPath(source); t.after(() => h.close());
+  const first = await h.call('getCards', {id: 'home', page: 1});
+  assert.equal(first.list.length, 1, 'home still returns the curated grid');
+  assert.equal(first.pagecount, 1, 'home must report exactly one page');
+  const second = await h.call('getCards', {id: 'home', page: 2});
+  assert.equal(second.pagecount, 1, 'page 2 still reports the single-page total');
+});
+
+test('category pages report the real pager total from data-pages', async t => {
+  const pager = '<nav class="hg-pager"><span class="hg-pager__jump" data-hg-pager-jump data-pages="70"></span></nav>';
+  const calls = [];
+  const h = new SpiderHost({fetchImpl: async url => {
+    calls.push(String(url));
+    return new Response(pager + GRID);
+  }});
+  await h.loadFromPath(source); t.after(() => h.close());
+  const first = await h.call('getCards', {id: 'ai-duanju', page: 1});
+  assert.equal(first.list.length, 1);
+  assert.equal(first.pagecount, 70, 'total comes from the pager markup');
+  const second = await h.call('getCards', {id: 'ai-duanju', page: 2});
+  assert.equal(second.pagecount, 70);
+  assert.ok(calls.some(url => url.endsWith('/ai-duanju/2/')), 'page 2 still hits the /2/ URL');
+});
+
+test('a category without pager markup does not fabricate a total', async t => {
+  const h = new SpiderHost({fetchImpl: async () => new Response(GRID)});
+  await h.loadFromPath(source); t.after(() => h.close());
+  const first = await h.call('getCards', {id: 'ai-duanju', page: 1});
+  assert.equal(first.list.length, 1);
+  assert.equal(first.pagecount, undefined, 'no pager => total stays unknown, paging stays available');
+});
